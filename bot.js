@@ -1,5 +1,6 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
+const puppeteer = require('puppeteer');
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 
@@ -15,7 +16,6 @@ const languages = [
     { code: 'ja', name: 'Japanese' },
     { code: 'fa', name: 'Persian' },
     { code: 'ar', name: 'Arabic' },
-    // Add more languages
 ];
 
 // Main Menu
@@ -32,41 +32,9 @@ function createMainMenu() {
     };
 }
 
-// Settings Menu
-function createSettingsMenu() {
-    return {
-        reply_markup: {
-            keyboard: [
-                ['📜 List of Commands'],
-                ['🔙 Back to Main Menu']
-            ],
-            resize_keyboard: true,
-            one_time_keyboard: false
-        }
-    };
-}
-
-// Function to create available commands menu
-function createCommandsMenu() {
-    return {
-        reply_markup: {
-            keyboard: [
-                ['/donate'],
-                ['/buy_me_coffee'],
-                ['/support_message'],
-                ['/add_to_your_group'],
-                ['🔙 Back to Settings']
-            ],
-            resize_keyboard: true,
-            one_time_keyboard: false
-        }
-    };
-}
-
 // Language Menu
 function createLanguageMenu(isSource = true) {
     const keyboard = languages.map(lang => [lang.name]);
-    keyboard.push(['🔍 Search']);
     keyboard.push(['🔙 Back to Main Menu']);
 
     return {
@@ -89,6 +57,48 @@ function createInputMenu() {
             one_time_keyboard: false
         }
     };
+}
+
+// Puppeteer translation function
+async function puppeteerTranslate(fromLang, toLang, text) {
+    const browser = await puppeteer.launch({ headless: true });
+    const page = await browser.newPage();
+    const translateUrl = `https://translate.google.com/?sl=${fromLang}&tl=${toLang}&text=${encodeURIComponent(text)}&op=translate`;
+
+    console.log('Opening URL:', translateUrl);
+    await page.goto(translateUrl);
+
+    // Wait for both source and result containers to appear
+    await page.waitForSelector('.D5aOJc');
+    await page.waitForSelector('.result-container');
+
+    // Extract the source and translated text
+    const [sourceText, translatedText] = await page.evaluate(() => {
+        const source = document.querySelector('.D5aOJc').innerText;
+        const result = document.querySelector('.result-container').innerText;
+        return [source, result];
+    });
+
+    console.log('Source Text:', sourceText);
+    console.log('Translated Text:', translatedText);
+
+    await browser.close();
+    return translatedText;
+}
+
+// Modified translateText function using Puppeteer
+async function translateText(text, fromLang, toLang) {
+    const fullURL = `https://translate.google.com/?sl=${fromLang}&tl=${toLang}&text=${encodeURIComponent(text)}&op=translate`;
+    console.log('Generated Google Translate URL:', fullURL);
+
+    try {
+        const translatedText = await puppeteerTranslate(fromLang, toLang, text);
+        console.log('Translated Text:', translatedText);
+        return translatedText;
+    } catch (error) {
+        console.error('Error fetching translation with Puppeteer:', error);
+        throw new Error('Failed to fetch translation');
+    }
 }
 
 // Respond to /start command
@@ -118,79 +128,38 @@ bot.on('message', (msg) => {
             users[chatId].step = 'select_source';
             bot.sendMessage(chatId, 'Please select the source language:', createLanguageMenu(true));
             break;
-        case '⚙️ Settings':
-            bot.sendMessage(chatId, 'Settings Menu:', createSettingsMenu());
-            break;
-        case '📜 List of Commands':
-            bot.sendMessage(chatId, 'Available commands:', createCommandsMenu());
-            break;
-        case '/donate':
-            bot.sendMessage(chatId, 'Thank you for considering a donation! You can support us using this link: [Donation Link]');
-            break;
-        case '/buy_me_coffee':
-            bot.sendMessage(chatId, 'Buy me a coffee ☕️ using this link: [Coffee Link]');
-            break;
-        case '/support_message':
-            bot.sendMessage(chatId, 'Send us a support message ❤️! We value your feedback. You can send your message here: [Support Link](https://t.me/hadivarp)', {
-                parse_mode: 'Markdown'
-            });
-            break;
-        case '/add_to_your_group':
-            bot.sendMessage(chatId, 'Add the bot to your group using this link: [Group Link]');
-            break;
-        case '🔍 Search':
-            users[chatId].step = 'search_language';
-            bot.sendMessage(chatId, 'Please enter a language name to search:');
-            break;
         case '🔙 Back to Main Menu':
             users[chatId].step = null;
             bot.sendMessage(chatId, 'Main Menu:', createMainMenu());
             break;
-        case '🔙 Back to Settings':
-            bot.sendMessage(chatId, 'Settings Menu:', createSettingsMenu());
-            break;
         default:
-            if (users[chatId].step === 'search_language') {
-                const matchedLanguages = languages.filter(lang =>
-                    lang.name.toLowerCase().includes(text.toLowerCase())
-                );
-                if (matchedLanguages.length > 0) {
-                    const keyboard = matchedLanguages.map(lang => [lang.name]);
-                    keyboard.push(['🔙 Back to Language List']);
-                    bot.sendMessage(chatId, 'Here are the matching languages:', {
-                        reply_markup: {
-                            keyboard: keyboard,
-                            resize_keyboard: true,
-                            one_time_keyboard: false
-                        }
-                    });
-                } else {
-                    bot.sendMessage(chatId, 'No matching languages found. Please try again or go back to the language list.', createLanguageMenu(users[chatId].selectingSource));
-                }
-            } else if (users[chatId].step === 'select_source' || users[chatId].step === 'select_target') {
+            if (users[chatId].step === 'select_source') {
                 const selectedLang = languages.find(lang => lang.name === text);
                 if (selectedLang) {
-                    if (users[chatId].step === 'select_source') {
-                        users[chatId].fromLang = selectedLang.code;
-                        users[chatId].step = 'select_target';
-                        bot.sendMessage(chatId, 'Great! Now select the target language:', createLanguageMenu(false));
-                    } else {
-                        users[chatId].toLang = selectedLang.code;
-                        users[chatId].step = 'input_text';
-                        const sourceLang = languages.find(l => l.code === users[chatId].fromLang).name;
-                        const targetLang = languages.find(l => l.code === users[chatId].toLang).name;
-                        bot.sendMessage(chatId, `You've selected to translate from ${sourceLang} to ${targetLang}. Please enter the text you want to translate:`, createInputMenu());
-                    }
+                    users[chatId].fromLang = selectedLang.code;
+                    users[chatId].step = 'select_target';
+                    bot.sendMessage(chatId, 'Great! Now select the target language:', createLanguageMenu(false));
                 } else {
-                    bot.sendMessage(chatId, 'Please select a valid language from the list.', createLanguageMenu(users[chatId].step === 'select_source'));
+                    bot.sendMessage(chatId, 'Please select a valid language.', createLanguageMenu(true));
+                }
+            } else if (users[chatId].step === 'select_target') {
+                const selectedLang = languages.find(lang => lang.name === text);
+                if (selectedLang) {
+                    users[chatId].toLang = selectedLang.code;
+                    users[chatId].step = 'input_text';
+                    const sourceLang = languages.find(l => l.code === users[chatId].fromLang).name;
+                    const targetLang = languages.find(l => l.code === users[chatId].toLang).name;
+                    bot.sendMessage(chatId, `You've selected to translate from ${sourceLang} to ${targetLang}. Please enter the text you want to translate:`, createInputMenu());
+                } else {
+                    bot.sendMessage(chatId, 'Please select a valid language.', createLanguageMenu(false));
                 }
             } else if (users[chatId].step === 'input_text') {
                 translateText(text, users[chatId].fromLang, users[chatId].toLang)
-                    .then(translatedText => {
+                    .then(result => {
                         const sourceLang = languages.find(l => l.code === users[chatId].fromLang).name;
                         const targetLang = languages.find(l => l.code === users[chatId].toLang).name;
-                        const response = `🌏 Translated from: ${sourceLang}\n🌏 Translated to: ${targetLang}\n🪄 Translated Text is:\n${translatedText}\nClick on the text for Copy 👆`;
-                        bot.sendMessage(chatId, response, { parse_mode: 'Markdown' });
+                        const response = `🌏 Translated from: ${sourceLang}\n🌏 Translated to: ${targetLang}\n\n${result}`;
+                        bot.sendMessage(chatId, response);
                         users[chatId].step = 'select_source';
                         bot.sendMessage(chatId, 'Do you want to translate another text?', createLanguageMenu(true));
                     })
