@@ -1,6 +1,7 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
-const puppeteer = require('puppeteer');
+const axios = require('axios');
+const cheerio = require('cheerio');
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 
@@ -59,45 +60,25 @@ function createInputMenu() {
     };
 }
 
-// Puppeteer translation function
-async function puppeteerTranslate(fromLang, toLang, text) {
-    const browser = await puppeteer.launch({ headless: true });
-    const page = await browser.newPage();
-    const translateUrl = `https://translate.google.com/?sl=${fromLang}&tl=${toLang}&text=${encodeURIComponent(text)}&op=translate`;
-
-    console.log('Opening URL:', translateUrl);
-    await page.goto(translateUrl);
-
-    // Wait for both source and result containers to appear
-    await page.waitForSelector('.D5aOJc');
-    await page.waitForSelector('.result-container');
-
-    // Extract the source and translated text
-    const [sourceText, translatedText] = await page.evaluate(() => {
-        const source = document.querySelector('.D5aOJc').innerText;
-        const result = document.querySelector('.result-container').innerText;
-        return [source, result];
-    });
-
-    console.log('Source Text:', sourceText);
-    console.log('Translated Text:', translatedText);
-
-    await browser.close();
-    return translatedText;
-}
-
-// Modified translateText function using Puppeteer
-async function translateText(text, fromLang, toLang) {
-    const fullURL = `https://translate.google.com/?sl=${fromLang}&tl=${toLang}&text=${encodeURIComponent(text)}&op=translate`;
-    console.log('Generated Google Translate URL:', fullURL);
-
+// Function to get translation using Google Translate
+async function getGoogleTranslation(text, fromLang = 'en', toLang = 'fr') {
     try {
-        const translatedText = await puppeteerTranslate(fromLang, toLang, text);
-        console.log('Translated Text:', translatedText);
-        return translatedText;
+        const url = `https://translate.google.com/m?hl=${toLang}&sl=${fromLang}&q=${encodeURIComponent(text)}&ie=UTF-8&prev=_m`;
+
+        const response = await axios.get(url);
+
+        const $ = cheerio.load(response.data);
+
+        const translation = $('.result-container').text();
+
+        if (translation) {
+            return translation;
+        } else {
+            throw new Error('Translation not found');
+        }
     } catch (error) {
-        console.error('Error fetching translation with Puppeteer:', error);
-        throw new Error('Failed to fetch translation');
+        console.error('Error getting translation:', error);
+        throw error;
     }
 }
 
@@ -115,7 +96,7 @@ bot.onText(/\/start/, (msg) => {
 });
 
 // Respond to user messages
-bot.on('message', (msg) => {
+bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
 
@@ -154,19 +135,17 @@ bot.on('message', (msg) => {
                     bot.sendMessage(chatId, 'Please select a valid language.', createLanguageMenu(false));
                 }
             } else if (users[chatId].step === 'input_text') {
-                translateText(text, users[chatId].fromLang, users[chatId].toLang)
-                    .then(result => {
-                        const sourceLang = languages.find(l => l.code === users[chatId].fromLang).name;
-                        const targetLang = languages.find(l => l.code === users[chatId].toLang).name;
-                        const response = `🌏 Translated from: ${sourceLang}\n🌏 Translated to: ${targetLang}\n\n${result}`;
-                        bot.sendMessage(chatId, response);
-                        users[chatId].step = 'select_source';
-                        bot.sendMessage(chatId, 'Do you want to translate another text?', createLanguageMenu(true));
-                    })
-                    .catch(error => {
-                        console.error('Translation error:', error);
-                        bot.sendMessage(chatId, 'An error occurred during translation. Please try again.');
-                    });
+                try {
+                    const translatedText = await getGoogleTranslation(text, users[chatId].fromLang, users[chatId].toLang);
+                    const sourceLang = languages.find(l => l.code === users[chatId].fromLang).name;
+                    const targetLang = languages.find(l => l.code === users[chatId].toLang).name;
+                    const response = `🌏 Translated from: ${sourceLang}\n🌏 Translated to: ${targetLang}\n\nTranslation: ${translatedText}`;
+                    bot.sendMessage(chatId, response);
+                    users[chatId].step = 'select_source';
+                    bot.sendMessage(chatId, 'Do you want to translate another text?', createLanguageMenu(true));
+                } catch (error) {
+                    bot.sendMessage(chatId, 'An error occurred during translation. Please try again.');
+                }
             } else {
                 bot.sendMessage(chatId, 'Please choose an option:', createMainMenu());
             }
