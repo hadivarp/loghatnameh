@@ -7,6 +7,7 @@ const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 
 const users = {};
 const languages = [
+    { code: 'Auto', name: 'Auto Detect' },
     { code: 'en', name: 'English' },
     { code: 'es', name: 'Spanish' },
     { code: 'fr', name: 'French' },
@@ -25,7 +26,23 @@ function createMainMenu() {
         reply_markup: {
             keyboard: [
                 ['🔤 Translate'],
-                ['⚙️ Settings', '❓ FAQ']
+                ['🔄 Change Languages', '⚙️ Settings', '❓ FAQ']
+            ],
+            resize_keyboard: true,
+            one_time_keyboard: false
+        }
+    };
+}
+
+// Settings Menu
+function createSettingsMenu() {
+    return {
+        reply_markup: {
+            keyboard: [
+                ['💰 Donate'],
+                ['📞 Contact Us'],
+                ['☕ Buy Me a Coffee'],
+                ['🔙 Back to Main Menu']
             ],
             resize_keyboard: true,
             one_time_keyboard: false
@@ -86,12 +103,15 @@ async function getGoogleTranslation(text, fromLang = 'en', toLang = 'fr') {
 bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
     if (!users[chatId]) {
-        users[chatId] = {}; // Ensure user state is initialized
+        users[chatId] = {
+            fromLang: 'Auto',
+            toLang: 'en'
+        };
     }
 
     if (!users[chatId].started) {
         bot.sendMessage(chatId, 'Please choose an option:', createMainMenu());
-        users[chatId].started = true; // Flag the user as having started the bot
+        users[chatId].started = true;
     }
 });
 
@@ -101,17 +121,39 @@ bot.on('message', async (msg) => {
     const text = msg.text;
 
     if (!users[chatId]) {
-        users[chatId] = {};
+        users[chatId] = {
+            fromLang: 'Auto',
+            toLang: 'en'
+        };
     }
 
     switch (text) {
         case '🔤 Translate':
+            users[chatId].step = 'input_text';
+            const sourceLang = languages.find(l => l.code === users[chatId].fromLang).name;
+            const targetLang = languages.find(l => l.code === users[chatId].toLang).name;
+            bot.sendMessage(chatId, `You're translating from ${sourceLang} to ${targetLang}. Enter the text to translate:`, createInputMenu());
+            break;
+        case '🔄 Change Languages':
             users[chatId].step = 'select_source';
             bot.sendMessage(chatId, 'Please select the source language:', createLanguageMenu(true));
+            break;
+        case '⚙️ Settings':
+            users[chatId].step = 'settings';
+            bot.sendMessage(chatId, 'Settings Menu:', createSettingsMenu());
             break;
         case '🔙 Back to Main Menu':
             users[chatId].step = null;
             bot.sendMessage(chatId, 'Main Menu:', createMainMenu());
+            break;
+        case '💰 Donate':
+            bot.sendMessage(chatId, 'Thank you for considering a donation! You can donate at: [Your donation link here]');
+            break;
+        case '📞 Contact Us':
+            bot.sendMessage(chatId, 'You can contact us at: [Your contact information here]');
+            break;
+        case '☕ Buy Me a Coffee':
+            bot.sendMessage(chatId, 'Thanks for the coffee! You can buy me a coffee at: [Your buy me a coffee link here]');
             break;
         default:
             if (users[chatId].step === 'select_source') {
@@ -127,10 +169,10 @@ bot.on('message', async (msg) => {
                 const selectedLang = languages.find(lang => lang.name === text);
                 if (selectedLang) {
                     users[chatId].toLang = selectedLang.code;
-                    users[chatId].step = 'input_text';
+                    users[chatId].step = null;
                     const sourceLang = languages.find(l => l.code === users[chatId].fromLang).name;
                     const targetLang = languages.find(l => l.code === users[chatId].toLang).name;
-                    bot.sendMessage(chatId, `You've selected to translate from ${sourceLang} to ${targetLang}. Please enter the text you want to translate:`, createInputMenu());
+                    bot.sendMessage(chatId, `Languages set to translate from ${sourceLang} to ${targetLang}.`, createMainMenu());
                 } else {
                     bot.sendMessage(chatId, 'Please select a valid language.', createLanguageMenu(false));
                 }
@@ -141,8 +183,8 @@ bot.on('message', async (msg) => {
                     const targetLang = languages.find(l => l.code === users[chatId].toLang).name;
                     const response = `🌏 Translated from: ${sourceLang}\n🌏 Translated to: ${targetLang}\n\nTranslation: ${translatedText}`;
                     bot.sendMessage(chatId, response);
-                    users[chatId].step = 'select_source';
-                    bot.sendMessage(chatId, 'Do you want to translate another text?', createLanguageMenu(true));
+                    bot.sendMessage(chatId, 'You can translate another text or choose an option:', createMainMenu());
+                    users[chatId].step = null;
                 } catch (error) {
                     bot.sendMessage(chatId, 'An error occurred during translation. Please try again.');
                 }
